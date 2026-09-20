@@ -2,7 +2,7 @@ name: docker-publish
 
 on:
   push:
-    branches: [main]
+    branches: [main, newznab-api]
     tags: ["v*"]
   workflow_dispatch:
 
