@@ -135,6 +135,21 @@ Two things to know: only complete releases are served, and search only finds wha
 
 ## Docker
 
+### Prebuilt image
+
+Every push to `main` publishes an image — `latest` and `main` tags, `vX.Y.Z` on releases:
+
+```bash
+docker run -it --rm \
+  -e ATLAS_NNTP_HOST=news.usenet.farm \
+  -e ATLAS_NNTP_USER=youruser \
+  -e ATLAS_NNTP_PASS=yourpass \
+  -v atlas-data:/app/data \
+  ghcr.io/skare69/atlas:latest
+```
+
+Prefer the image over building? Swap `build: .` for `image: ghcr.io/skare69/atlas:latest` in the compose file.
+
 ### With Docker Compose
 
 Fill in your credentials in `docker_compose.yml`, then:
