@@ -1,4 +1,4 @@
-from src.config import load_config, save_config
+from src.config import api_settings, load_config, rotate_api_key, save_config, update_config
 from src.database import create_db, purge_broken
 from src.download import download_release
 from src.groups_menu import groups_menu
@@ -39,6 +39,8 @@ if sys.platform == "win32":
 BASE_DIR = app_dir()
 PID_FILE = BASE_DIR / "bg_indexer.pid"
 LOG_FILE = BASE_DIR / "bg_index.log"
+API_PID_FILE = BASE_DIR / "bg_api.pid"
+API_LOG_FILE = BASE_DIR / "bg_api.log"
 STATUS_FILE = BASE_DIR / "status.json"
 STATS_FILE = BASE_DIR / "stats.json"
 
@@ -100,7 +102,8 @@ def get_status():
     return status
 
 
-def _is_indexer_pid(pid):
+#checks pid is alive and, on /proc systems, actually one of our daemons (by cmdline markers)
+def _is_daemon_pid(pid, *markers):
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -109,6 +112,10 @@ def _is_indexer_pid(pid):
     except PermissionError:
         return True
 
+    except OSError:
+        #windows: a just-died pid can surface as WinError 87 instead of ProcessLookupError
+        return False
+
     if Path("/proc").exists():
         try:
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
@@ -116,9 +123,13 @@ def _is_indexer_pid(pid):
         except OSError:
             return False
 
-        return b"bg_indexer.py" in cmdline or b"--bg-indexer" in cmdline
+        return any(m in cmdline for m in markers)
 
     return True
+
+
+def _is_indexer_pid(pid):
+    return _is_daemon_pid(pid, b"bg_indexer.py", b"--bg-indexer")
 
 
 def indexer_alive():
@@ -218,6 +229,106 @@ def stop_background_indexer():
         pass
 
     PID_FILE.unlink(missing_ok = True)
+    return True
+
+
+def api_alive():
+    if not API_PID_FILE.exists():
+        return False
+
+    try:
+        pid = int(API_PID_FILE.read_text().strip())
+    except ValueError:
+        API_PID_FILE.unlink(missing_ok = True)
+        return False
+
+    if _is_daemon_pid(pid, b"bg_api.py", b"--bg-api"):
+        return True
+
+    API_PID_FILE.unlink(missing_ok = True)
+    return False
+
+
+def start_api():
+    if api_alive():
+        console.print("[yellow]api server already running[/yellow]")
+        return False
+
+    try:
+        rotate_log(API_LOG_FILE)
+        log_file = API_LOG_FILE.open("a")
+
+    except OSError as e:
+        console.print(f"[red]couldnt start api server: {e}[/red]")
+        return False
+
+    try:
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--bg-api"]
+        else:
+            cmd = [sys.executable, "-u", str(Path(__file__).resolve().parent / "bg_api.py")]
+
+        subprocess.Popen(
+            cmd,
+            cwd = BASE_DIR,
+            stdin = subprocess.DEVNULL,
+            stdout = log_file,
+            stderr = subprocess.STDOUT,
+            start_new_session = True,
+        )
+
+    except OSError as e:
+        log_file.close()
+        console.print(f"[red]couldnt start api server: {e}[/red]")
+        return False
+
+    log_file.close()
+
+    for _ in range(50):
+        if api_alive():
+            return True
+        time.sleep(0.1)
+
+    console.print(f"[red]api server didnt come up, check {API_LOG_FILE.name}[/red]")
+    return False
+
+
+def stop_api():
+    if not API_PID_FILE.exists():
+        return False
+
+    try:
+        pid = int(API_PID_FILE.read_text().strip())
+    except ValueError:
+        API_PID_FILE.unlink(missing_ok = True)
+        return False
+
+    if not _is_daemon_pid(pid, b"bg_api.py", b"--bg-api"):
+        API_PID_FILE.unlink(missing_ok = True)
+        return False
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        API_PID_FILE.unlink(missing_ok = True)
+        return False
+
+    #5 sec to comply or die
+    for _ in range(50):
+        if not _is_daemon_pid(pid, b"bg_api.py", b"--bg-api"):
+            API_PID_FILE.unlink(missing_ok = True)
+            return True
+
+        time.sleep(0.1)
+
+    #didnt exit in time soo kill him
+    try:
+        os.kill(pid, signal.SIGKILL)
+
+    except (ProcessLookupError, PermissionError):
+        pass
+
+    API_PID_FILE.unlink(missing_ok = True)
     return True
     
 
@@ -500,6 +611,85 @@ def do_search(config):
                 prompt("[enter]")
 
 
+def do_api_menu():
+    while True:
+        clear()
+
+        s = api_settings()
+        running = api_alive()
+
+        #0.0.0.0 isnt clickable, show loopback instead
+        url_host = "127.0.0.1" if s["host"] in ("0.0.0.0", "::") else s["host"]
+
+        info = Text()
+        info.append(f"API server: ", style = "bold")
+        info.append("running\n" if running else "stopped\n", style = "green" if running else "dim")
+        info.append(f"URL: http://{url_host}:{s['port']}/api\n")
+        info.append(f"apikey: {s['key']}\n", style = "dim")
+        info.append(f"auto-start: {'on' if s['enabled'] else 'off'}")
+
+        menu = Table(show_header = False, box = None, padding = (0, 2))
+        menu.add_column("num", style = "bold cyan", width = 3)
+        menu.add_column("label", style = "white")
+        menu.add_row("1.", "Stop server" if running else "Start server")
+        menu.add_row("2.", f"Toggle auto-start ({'on' if s['enabled'] else 'off'})")
+        menu.add_row("3.", "Regenerate apikey")
+        menu.add_row("4.", f"Set port ({s['port']})")
+        menu.add_row("0.", "Back")
+        console.print(panel(Group(info, "", menu), "blue"))
+
+        choice = ask("\nChoice: ")
+
+        if choice == 0:
+            return
+
+        if choice == 1:
+            if running:
+                stop_api()
+                console.print("[green]api server stopped[/green]")
+            elif start_api():
+                console.print("[green]api server started[/green]")
+            prompt("[enter]")
+
+        elif choice == 2:
+            update_config(api_enabled = not s["enabled"])
+            console.print(f"[green]auto-start {'on' if not s['enabled'] else 'off'}[/green]")
+            prompt("[enter]")
+
+        elif choice == 3:
+            rotate_api_key()
+            console.print("[green]apikey regenerated[/green]")
+
+            #server caches the key, bounce it so it picks up the new one
+            if running:
+                stop_api()
+                if start_api():
+                    console.print("[green]api server restarted[/green]")
+                else:
+                    console.print("[yellow]api server didnt come back up, check " + API_LOG_FILE.name + "[/yellow]")
+            prompt("[enter]")
+
+        elif choice == 4:
+            while True:
+                port = ask("New port (1024-65535): ", s["port"])
+
+                if 1024 <= port <= 65535:
+                    break
+
+                console.print("[red]port must be between 1024 and 65535[/red]\n")
+
+            update_config(api_port = port)
+            console.print(f"[green]port set to {port}[/green]")
+
+            if running and port != s["port"]:
+                stop_api()
+                if start_api():
+                    console.print("[green]api server restarted[/green]")
+                else:
+                    console.print("[yellow]api server didnt come back up, check " + API_LOG_FILE.name + "[/yellow]")
+            prompt("[enter]")
+
+
 def do_settings():
     clear()
 
@@ -512,6 +702,7 @@ def do_settings():
     menu.add_row("2.", f"Change indexer mode ({config.get('index_mode', 'dynamic')})")
     menu.add_row("3.", "Purge broken releases")
     menu.add_row("4.", "Wipe db and cache")
+    menu.add_row("5.", f"API server ({'running' if api_alive() else 'stopped'})")
     menu.add_row("0.", "Back")
     console.print(panel(menu, "blue"))
 
@@ -575,6 +766,10 @@ def do_settings():
             prompt("[enter]")
             return
 
+        #kill the api server so it doesnt recreate its pid/log
+        if api_alive():
+            stop_api()
+
         files = [
             Path(BASE_DIR) / "atlas.db",
             Path(BASE_DIR) / "atlas.db-wal",
@@ -583,6 +778,8 @@ def do_settings():
             LOG_FILE,
             STATUS_FILE,
             STATS_FILE,
+            API_PID_FILE,
+            API_LOG_FILE,
         ]
 
         for f in files:
@@ -590,6 +787,10 @@ def do_settings():
 
         console.print("[green]wiped db and cache[/green]")
         prompt("[enter]")
+        return
+
+    if choice == 5:
+        do_api_menu()
         return
 
     if choice != 1:
@@ -631,6 +832,11 @@ def main():
         if not config:
             console.print("[red]setup failed, no config found[/red]")
             return
+
+    #auto-start the api server if enabled, best effort
+    if api_settings()["enabled"] and not api_alive():
+        if not start_api():
+            console.print("[dim]api server didnt start[/dim]")
 
     while True:
         clear()
@@ -860,6 +1066,11 @@ if __name__ == "__main__":
         if "--bg-indexer" in sys.argv:
             import bg_indexer
             bg_indexer.main()
+            sys.exit(0)
+
+        if "--bg-api" in sys.argv:
+            import bg_api
+            bg_api.main()
             sys.exit(0)
 
         main()

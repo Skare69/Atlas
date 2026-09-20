@@ -29,18 +29,7 @@ def _article_timestamp(date_str):
         return int(time.time())
 
 
-def generate_nzb(release_id, output_dir=None):
-    release = get_release(release_id)
-    articles = get_articles(release_id)
-
-    if release is None:
-        print(f"{red}Release not found{reset}")
-        return
-
-    if not articles:
-        print(f"{red}No articles found{reset}")
-        return
-
+def _build_document(release, articles):
     #root tag
     nzb = et.Element("nzb", {"xmlns": "http://www.newzbin.com/DTD/2003/nzb"})
 
@@ -87,13 +76,42 @@ def generate_nzb(release_id, output_dir=None):
 
     et.indent(nzb, space="  ")
 
+    #elementtree cant write doctype, so build the body ourselves
+    return et.tostring(nzb, encoding="unicode")
+
+
+def nzb_payload(release_id):
+    release = get_release(release_id)
+
+    if release is None:
+        return None, None
+
+    articles = get_articles(release_id)
+
+    if not articles:
+        return None, None
+
+    return nzb_filename(release[1], release[0]), _build_document(release, articles)
+
+
+def generate_nzb(release_id, output_dir=None):
+    release = get_release(release_id)
+    articles = get_articles(release_id)
+
+    if release is None:
+        print(f"{red}Release not found{reset}")
+        return
+
+    if not articles:
+        print(f"{red}No articles found{reset}")
+        return
+
+    body = _build_document(release, articles)
+
     filename = nzb_filename(release[1], release[0])
 
     if output_dir:
         filename = str(Path(output_dir) / filename)
-
-    #elementtree cant write doctype, so build the body ourselves
-    body = et.tostring(nzb, encoding="unicode")
 
     target = Path(filename)
     tmp = target.with_suffix(target.suffix + ".tmp")

@@ -13,6 +13,9 @@ services:
       - ATLAS_NNTP_USER=
       - ATLAS_NNTP_PASS=
       - ATLAS_INDEX_MODE=dynamic
+      # - ATLAS_API_ENABLED=1
+      # - ATLAS_API_PORT=8085
+      # - ATLAS_API_KEY=
     network_mode: host
 
 volumes:

@@ -37,6 +37,7 @@ Most Usenet indexers are either a paid service or a heavyweight self hosted stac
 | **NZB generation** | Generates NZB 1.1 files locally, no third party service |
 | **SABnzbd integration** | Bundled SABnzbd 5.0.4, auto configured, opens in browser on download |
 | **Background indexing** | Runs independently of the UI, start/stop without closing Atlas |
+| **Newznab API** | Prowlarr/Sonarr/Radarr can use Atlas as an indexer |
 | **Local database** | Groups, releases, articles, and indexing state all in `atlas.db` |
 | **Docker support** | Compose file included if you'd rather not manage a venv |
 
@@ -117,6 +118,21 @@ Finished files land in `~/Downloads/complete`.
 - **Purge broken releases** — deletes incomplete releases, frees space
 - **Wipe DB and cache** — full reset: database, logs, status, stats (stop the indexer first)
 
+## Prowlarr
+
+Atlas ships with a built-in Newznab API, so Prowlarr (and anything it feeds, like Sonarr or Radarr) can use Atlas as an indexer. It's off by default — enable it in Settings → API server (start it, and flip on auto-start if you want it up every launch), or set `ATLAS_API_ENABLED=1`.
+
+To hook up Prowlarr:
+
+1. **Add Indexer → Generic Newznab**
+2. **URL**: `http://<atlas-host>:8085/api`
+3. **API key**: paste the key from the API server submenu (shown there, regenerable, stored in `config.json`). In Docker, setting `ATLAS_API_KEY` is recommended so it survives rebuilds.
+4. **Categories**: pick whatever you want — Atlas derives them from the newsgroup name (Movies/TV/Audio/PC/XXX/Books/Other)
+
+Sonarr and Radarr already linked through Prowlarr work with no extra setup. The API supports search, tvsearch (season/ep parsed from `SxxEyy` in the name) and movie search (title tokens or a `tt` id). NZBs are served through `?t=get&id=...&apikey=...`.
+
+Two things to know: only complete releases are served, and search only finds what's indexed — start the background indexer and let history build first.
+
 ## Docker
 
 ### With Docker Compose
@@ -145,6 +161,10 @@ Set these in `docker_compose.yml` instead of using config files:
 | `ATLAS_NNTP_USER` | Your username |
 | `ATLAS_NNTP_PASS` | Your password |
 | `ATLAS_INDEX_MODE` | `dynamic` / `live` / `backfill` |
+| `ATLAS_API_ENABLED` | Set to `1` to start the Newznab API server on launch |
+| `ATLAS_API_PORT` | API port, default `8085` |
+| `ATLAS_API_KEY` | API key for indexers; generated and stored if unset |
+| `ATLAS_API_HOST` | Bind address, default `0.0.0.0` |
 
 ### Without Compose
 
@@ -176,6 +196,13 @@ The bundled SABnzbd only ships with the normal install, not the container image.
 <summary>AI search isn't working</summary>
 
 Make sure [Ollama](https://ollama.com) is installed and running locally, with a compatible model pulled (`ollama pull qwen3:4b`). Atlas doesn't ship with Ollama — it calls the local Ollama API.
+
+</details>
+
+<details>
+<summary>Prowlarr can't connect</summary>
+
+Check the usual suspects: the API server isn't started (enable it in Settings → API server or set `ATLAS_API_ENABLED=1`), wrong host or port (Docker uses host networking — use the machine's IP, not `localhost`), or the API key doesn't match (regenerate and re-paste it).
 
 </details>
 

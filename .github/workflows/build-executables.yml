@@ -40,6 +40,7 @@ jobs:
           --collect-submodules keyring
           --collect-data certifi
           --hidden-import bg_indexer
+          --hidden-import bg_api
           main.py
 
       - name: Upload artifacts
