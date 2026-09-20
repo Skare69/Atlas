@@ -112,9 +112,21 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(total, 1)
         self.assertEqual(rows[0][0], rid("Atlas.Movie.tt0117731.1080p"))
 
-    def test_no_tokens_is_empty(self):
-        self.assertEqual(newznab.search_releases({"cat": "2000"}), ([], 0))
-        self.assertEqual(newznab.search_releases({}), ([], 0))
+    def test_no_tokens_returns_newest(self):
+        #no q param: standard newznab behaviour = newest releases first,
+        #complete-only still enforced, unknown cats still match nothing
+        rows, total = newznab.search_releases({})
+        self.assertEqual(total, 4)
+        self.assertEqual(len(rows), 4)
+        dates = [r[4] for r in rows]
+        self.assertEqual(dates, sorted(dates, reverse = True))
+
+        rows_cat, total_cat = newznab.search_releases({"cat": "2000"})
+        self.assertEqual([r[1] for r in rows_cat], ["Atlas.Movie.tt0117731.1080p", "Great.Movie.2019.1080p"])
+        self.assertEqual(total_cat, 2)
+
+        rows_unknown, total_unknown = newznab.search_releases({"cat": "9999"})
+        self.assertEqual((rows_unknown, total_unknown), ([], 0))
 
     def test_limit_offset_total(self):
         base, total = newznab.search_releases({"q": "movie"})

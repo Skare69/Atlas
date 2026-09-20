@@ -124,13 +124,27 @@ def _cat_clause(params):
 def search_releases(params):
     tokens = _tokens(params)
 
-    if not tokens:
-        return [], 0
-
-    query = " ".join(tokens)
     cat_sql, cat_vals = _cat_clause(params)
     limit = min(MAX_LIMIT, max(1, _to_int(params.get("limit"), DEFAULT_LIMIT)))
     offset = max(0, _to_int(params.get("offset"), 0))
+
+    if not tokens:
+        #no q param: standard newznab behaviour is newest releases.
+        #prowlarr's indexer test and rss sync both query without q,
+        #returning [] here made atlas unusable as a prowlarr indexer.
+        sql = f"""
+            select r.id, r.name, r.group_name, r.poster, r.posted_date, r.size, r.complete, r.parts
+            from releases r
+            where r.complete = 1{cat_sql}
+            order by r.posted_date desc, r.id desc
+            limit ? offset ?
+        """
+        rows = _fts_or_like(sql, sql, (*cat_vals, limit, offset), (*cat_vals, limit, offset))
+        cnt = f"select count(*) from releases r where r.complete = 1{cat_sql}"
+        total = _fts_or_like(cnt, cnt, (*cat_vals,), (*cat_vals,), fetch_one = True)
+        return rows, total[0]
+
+    query = " ".join(tokens)
 
     #fts first, like fallback, same shape as search_all_releases
     rows = _fts_or_like(f"""
